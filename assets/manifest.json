@@ -1,0 +1,18 @@
+{
+  "assets": [
+    {"id": "player", "path": "Models/Player/player.glb", "source": "quaternius.com", "license": "CC0"},
+    {"id": "civilian_01", "path": "Models/NPC/civilian_01.glb", "source": "quaternius.com", "license": "CC0"},
+    {"id": "civilian_02", "path": "Models/NPC/civilian_02.glb", "source": "quaternius.com", "license": "CC0"},
+    {"id": "police_officer", "path": "Models/NPC/police_officer.glb", "source": "quaternius.com", "license": "CC0"},
+    {"id": "car_sedan", "path": "Models/Vehicles/car_sedan.glb", "source": "kenney.nl", "license": "CC0"},
+    {"id": "car_suv", "path": "Models/Vehicles/car_suv.glb", "source": "kenney.nl", "license": "CC0"},
+    {"id": "taxi", "path": "Models/Vehicles/taxi.glb", "source": "kenney.nl", "license": "CC0"},
+    {"id": "police_car", "path": "Models/Vehicles/police_car.glb", "source": "kenney.nl", "license": "CC0"},
+    {"id": "city_district", "path": "Scenes/City/city_district.glb", "source": "quaternius.com + kenney.nl", "license": "CC0"},
+    {"id": "tree_01", "path": "Models/Props/tree_01.glb", "source": "kenney.nl", "license": "CC0"},
+    {"id": "street_lamp", "path": "Models/Props/street_lamp.glb", "source": "kenney.nl", "license": "CC0"},
+    {"id": "bench", "path": "Models/Props/bench.glb", "source": "kenney.nl", "license": "CC0"},
+    {"id": "traffic_light", "path": "Models/Props/traffic_light.glb", "source": "kenney.nl", "license": "CC0"},
+    {"id": "trash_can", "path": "Models/Props/trash_can.glb", "source": "kenney.nl", "license": "CC0"}
+  ]
+}

@@ -1,0 +1,2572 @@
+﻿package com.javacity.audio;
+
+import com.jme3.asset.AssetManager;
+import com.jme3.asset.AssetNotFoundException;
+import com.jme3.audio.AudioData;
+import com.jme3.audio.AudioNode;
+import com.jme3.scene.Node;
+
+import java.util.HashMap;
+import java.util.Map;
+
+public class AudioManager {
+    private AssetManager assetManager;
+    private Node rootNode;
+    
+    private Map<String, AudioNode> audioNodes = new HashMap<>();
+
+    public AudioManager(AssetManager assetManager, Node rootNode) {
+        this.assetManager = assetManager;
+        this.rootNode = rootNode;
+    }
+    
+    private AudioNode loadAudio(String key, String path, boolean loop) {
+        try {
+            AudioNode node = new AudioNode(assetManager, path, AudioData.DataType.Buffer);
+            node.setLooping(loop);
+            node.setPositional(false);
+            node.setVolume(1.0f);
+            rootNode.attachChild(node);
+            audioNodes.put(key, node);
+            return node;
+        } catch (AssetNotFoundException e) {
+            System.err.println("Warning: Audio file not found: " + path);
+            return null;
+        }
+    }
+    
+    public void init() {
+        loadAudio("footstep", "Audio/SFX/footstep.ogg", false);
+        loadAudio("engine", "Audio/SFX/engine_loop.ogg", true);
+        loadAudio("siren", "Audio/SFX/siren.ogg", true);
+        loadAudio("horn", "Audio/SFX/horn.ogg", false);
+        loadAudio("brake", "Audio/SFX/brake.ogg", false);
+        loadAudio("ambient", "Audio/Ambient/city_ambient.ogg", true);
+        loadAudio("ui_click", "Audio/SFX/ui_click.ogg", false);
+        loadAudio("mission_start", "Audio/SFX/mission_start.ogg", false);
+        loadAudio("mission_complete", "Audio/SFX/mission_complete.ogg", false);
+    }
+    
+    private void play(String key) {
+        AudioNode node = audioNodes.get(key);
+        if (node != null) {
+            node.playInstance();
+        }
+    }
+    
+    private void playLoop(String key) {
+        AudioNode node = audioNodes.get(key);
+        if (node != null && node.getStatus() != com.jme3.audio.AudioSource.Status.Playing) {
+            node.play();
+        }
+    }
+    
+    private void stop(String key) {
+        AudioNode node = audioNodes.get(key);
+        if (node != null) {
+            node.stop();
+        }
+    }
+
+    public void playFootstep() { play("footstep"); }
+    public void playEngineLoop() { playLoop("engine"); }
+    public void stopEngineLoop() { stop("engine"); }
+    public void playSiren() { playLoop("siren"); }
+    public void stopSiren() { stop("siren"); }
+    public void playHorn() { play("horn"); }
+    public void playBrake() { play("brake"); }
+    public void playAmbient() { playLoop("ambient"); }
+    public void stopAmbient() { stop("ambient"); }
+    public void playUIClick() { play("ui_click"); }
+    public void playMissionStart() { play("mission_start"); }
+    public void playMissionComplete() { play("mission_complete"); }
+}
+package com.javacity.camera;
+
+import com.jme3.collision.CollisionResult;
+import com.jme3.collision.CollisionResults;
+import com.jme3.input.InputManager;
+import com.jme3.input.RawInputListener;
+import com.jme3.input.event.*;
+import com.jme3.math.FastMath;
+import com.jme3.math.Quaternion;
+import com.jme3.math.Ray;
+import com.jme3.math.Vector3f;
+import com.jme3.renderer.Camera;
+import com.jme3.scene.Node;
+
+public class ThirdPersonCamera implements RawInputListener {
+    private Camera cam;
+    private Node sceneNode;
+    private InputManager inputManager;
+    
+    private float yaw = 0;
+    private float pitch = 20 * FastMath.DEG_TO_RAD;
+    private float distance = 5.0f;
+    
+    private float minDistance = 2.0f;
+    private float maxDistance = 10.0f;
+    private float heightOffset = 1.5f;
+    
+    private float camLerpSpeed = 10.0f;
+    
+    private boolean inVehicle = false;
+
+    public ThirdPersonCamera(Camera cam, Node sceneNode, InputManager inputManager) {
+        this.cam = cam;
+        this.sceneNode = sceneNode;
+        this.inputManager = inputManager;
+        
+        inputManager.setCursorVisible(false);
+        inputManager.addRawInputListener(this);
+    }
+
+    public void update(float tpf, Vector3f targetPosition, boolean isInVehicle) {
+        if (this.inVehicle != isInVehicle) {
+            this.inVehicle = isInVehicle;
+            if (this.inVehicle) {
+                distance = 8.0f;
+                heightOffset = 2.0f;
+            } else {
+                distance = 5.0f;
+                heightOffset = 1.5f;
+            }
+        }
+
+        Quaternion rotation = new Quaternion().fromAngles(pitch, yaw, 0);
+        Vector3f offset = rotation.mult(new Vector3f(0, 0, distance));
+        
+        Vector3f lookAtPos = targetPosition.add(0, heightOffset, 0);
+        Vector3f idealPos = lookAtPos.add(offset);
+        
+        Ray ray = new Ray(lookAtPos, offset.normalize());
+        ray.setLimit(distance);
+        CollisionResults results = new CollisionResults();
+        sceneNode.collideWith(ray, results);
+        
+        Vector3f finalPos = idealPos;
+        if (results.size() > 0) {
+            CollisionResult closest = results.getClosestCollision();
+            if (closest.getDistance() < distance) {
+                finalPos = lookAtPos.add(offset.normalize().mult(closest.getDistance() - 0.2f));
+            }
+        }
+        
+        Vector3f currentPos = cam.getLocation();
+        currentPos.interpolateLocal(finalPos, camLerpSpeed * tpf);
+        cam.setLocation(currentPos);
+        cam.lookAt(lookAtPos, Vector3f.UNIT_Y);
+    }
+
+    @Override
+    public void onMouseMotionEvent(MouseMotionEvent evt) {
+        yaw -= evt.getDX() * 0.005f;
+        pitch -= evt.getDY() * 0.005f;
+        pitch = FastMath.clamp(pitch, -15 * FastMath.DEG_TO_RAD, 80 * FastMath.DEG_TO_RAD);
+        
+        if (evt.getDeltaWheel() != 0) {
+            distance -= evt.getDeltaWheel() * 0.01f;
+            distance = FastMath.clamp(distance, minDistance, maxDistance);
+        }
+    }
+
+    @Override public void beginInput() {}
+    @Override public void endInput() {}
+    @Override public void onJoyAxisEvent(JoyAxisEvent evt) {}
+    @Override public void onJoyButtonEvent(JoyButtonEvent evt) {}
+    @Override public void onMouseButtonEvent(MouseButtonEvent evt) {}
+    @Override public void onKeyEvent(KeyInputEvent evt) {}
+    @Override public void onTouchEvent(TouchEvent evt) {}
+}
+package com.javacity.core;
+
+import com.jme3.app.SimpleApplication;
+import com.jme3.bullet.BulletAppState;
+import com.jme3.light.AmbientLight;
+import com.jme3.light.DirectionalLight;
+import com.jme3.math.ColorRGBA;
+import com.jme3.math.Vector3f;
+import com.jme3.shadow.DirectionalLightShadowRenderer;
+import com.jme3.input.KeyInput;
+import com.jme3.input.controls.KeyTrigger;
+import com.jme3.input.controls.ActionListener;
+
+public class GameApplication extends SimpleApplication implements ActionListener {
+
+    private BulletAppState bulletAppState;
+    private GameStateManager gameStateManager;
+    private boolean debugEnabled = false;
+
+    // Managers will be instantiated here once their classes are fully implemented
+    // private WorldManager worldManager;
+    // private Player player;
+    // private ThirdPersonCamera thirdPersonCamera;
+    // private VehicleSpawner vehicleSpawner;
+    // private NPCSpawner npcSpawner;
+    // private PoliceManager policeManager;
+    // private MissionManager missionManager;
+    // private WantedSystem wantedSystem;
+    // private HUD hud;
+    // private AudioManager audioManager;
+    // private DayNightSystem dayNightSystem;
+    // private SaveManager saveManager;
+    // private InteractionSystem interactionSystem;
+
+    @Override
+    public void simpleInitApp() {
+        // Initialize physics
+        bulletAppState = new BulletAppState();
+        stateManager.attach(bulletAppState);
+        bulletAppState.setDebugEnabled(debugEnabled);
+        bulletAppState.getPhysicsSpace().setGravity(new Vector3f(0, GameConfig.PHYSICS_GRAVITY, 0));
+
+        // State Manager
+        gameStateManager = new GameStateManager();
+        gameStateManager.setState(GameStateManager.GameState.PLAYING);
+
+        // Lighting
+        setupLighting();
+
+        // Inputs
+        setupInputs();
+    }
+
+    private void setupLighting() {
+        DirectionalLight sun = new DirectionalLight();
+        sun.setDirection(new Vector3f(-0.5f, -1.0f, -0.5f).normalizeLocal());
+        sun.setColor(ColorRGBA.White.mult(1.5f));
+        rootNode.addLight(sun);
+
+        AmbientLight ambient = new AmbientLight();
+        ambient.setColor(ColorRGBA.White.mult(0.3f));
+        rootNode.addLight(ambient);
+
+        DirectionalLightShadowRenderer dlsr = new DirectionalLightShadowRenderer(assetManager, 4096, 3);
+        dlsr.setLight(sun);
+        viewPort.addProcessor(dlsr);
+    }
+
+    private void setupInputs() {
+        inputManager.addMapping(GameConstants.INPUT_FORWARD, new KeyTrigger(KeyInput.KEY_W));
+        inputManager.addMapping(GameConstants.INPUT_BACKWARD, new KeyTrigger(KeyInput.KEY_S));
+        inputManager.addMapping(GameConstants.INPUT_LEFT, new KeyTrigger(KeyInput.KEY_A));
+        inputManager.addMapping(GameConstants.INPUT_RIGHT, new KeyTrigger(KeyInput.KEY_D));
+        inputManager.addMapping(GameConstants.INPUT_SPRINT, new KeyTrigger(KeyInput.KEY_LSHIFT));
+        inputManager.addMapping(GameConstants.INPUT_JUMP, new KeyTrigger(KeyInput.KEY_SPACE));
+        inputManager.addMapping(GameConstants.INPUT_INTERACT, new KeyTrigger(KeyInput.KEY_E));
+        inputManager.addMapping(GameConstants.INPUT_ENTER_VEHICLE, new KeyTrigger(KeyInput.KEY_F));
+        inputManager.addMapping(GameConstants.INPUT_TOGGLE_DEBUG, new KeyTrigger(KeyInput.KEY_F3));
+
+        inputManager.addListener(this, GameConstants.INPUT_FORWARD, GameConstants.INPUT_BACKWARD,
+                GameConstants.INPUT_LEFT, GameConstants.INPUT_RIGHT, GameConstants.INPUT_SPRINT,
+                GameConstants.INPUT_JUMP, GameConstants.INPUT_INTERACT, GameConstants.INPUT_ENTER_VEHICLE,
+                GameConstants.INPUT_TOGGLE_DEBUG);
+    }
+
+    @Override
+    public void onAction(String name, boolean isPressed, float tpf) {
+        if (name.equals(GameConstants.INPUT_TOGGLE_DEBUG) && isPressed) {
+            debugEnabled = !debugEnabled;
+            if (bulletAppState != null) {
+                bulletAppState.setDebugEnabled(debugEnabled);
+            }
+        }
+        
+        if (gameStateManager.getCurrentState() == GameStateManager.GameState.PLAYING) {
+            // Pass input to Player and relevant Managers
+        }
+    }
+
+    @Override
+    public void simpleUpdate(float tpf) {
+        if (gameStateManager.getCurrentState() == GameStateManager.GameState.PLAYING) {
+            // Update all active managers
+        }
+    }
+}
+package com.javacity.core;
+
+public class GameConfig {
+    // Display
+    public static final int DISPLAY_WIDTH = 1920;
+    public static final int DISPLAY_HEIGHT = 1080;
+    public static final boolean DISPLAY_FULLSCREEN = false;
+    public static final boolean DISPLAY_VSYNC = true;
+
+    // Player
+    public static final float PLAYER_WALK_SPEED = 4f;
+    public static final float PLAYER_RUN_SPEED = 8f;
+    public static final float PLAYER_SPRINT_SPEED = 12f;
+    public static final float PLAYER_JUMP_FORCE = 400f;
+
+    // Camera
+    public static final float CAMERA_DISTANCE = 8f;
+    public static final float CAMERA_MIN_DISTANCE = 3f;
+    public static final float CAMERA_MAX_DISTANCE = 15f;
+    public static final float CAMERA_SENSITIVITY = 2f;
+
+    // Vehicle
+    public static final float VEHICLE_MAX_SPEED = 50f;
+    public static final float VEHICLE_ACCELERATION = 800f;
+    public static final float VEHICLE_BRAKE_FORCE = 100f;
+    public static final float VEHICLE_STEERING_SPEED = 0.5f;
+
+    // World
+    public static final int NPC_POPULATION_LIMIT = 20;
+    public static final int VEHICLE_POPULATION_LIMIT = 10;
+    public static final float ACTIVATION_DISTANCE = 80f;
+
+    // Physics
+    public static final float PHYSICS_GRAVITY = -29.4f;
+
+    // DayNight
+    public static final float DAY_DURATION_SECONDS = 300f;
+}
+package com.javacity.core;
+
+public class GameConstants {
+    // Input Mappings
+    public static final String INPUT_FORWARD = "INPUT_FORWARD";
+    public static final String INPUT_BACKWARD = "INPUT_BACKWARD";
+    public static final String INPUT_LEFT = "INPUT_LEFT";
+    public static final String INPUT_RIGHT = "INPUT_RIGHT";
+    public static final String INPUT_SPRINT = "INPUT_SPRINT";
+    public static final String INPUT_JUMP = "INPUT_JUMP";
+    public static final String INPUT_INTERACT = "INPUT_INTERACT";
+    public static final String INPUT_ENTER_VEHICLE = "INPUT_ENTER_VEHICLE";
+    public static final String INPUT_TOGGLE_DEBUG = "INPUT_TOGGLE_DEBUG";
+    public static final String INPUT_PAUSE = "INPUT_PAUSE";
+
+    // Asset Paths
+    public static final String PATH_PLAYER_MODEL = "Models/Player/player.glb";
+    public static final String PATH_VEHICLE_MODEL = "Models/Vehicle/car.glb";
+    
+    // Animation Names
+    public static final String ANIM_IDLE = "Idle";
+    public static final String ANIM_WALK = "Walk";
+    public static final String ANIM_RUN = "Run";
+    public static final String ANIM_JUMP = "Jump";
+}
+package com.javacity.core;
+
+public class GameStateManager {
+    public enum GameState {
+        MENU, PLAYING, PAUSED, MISSION_COMPLETE
+    }
+
+    private GameState currentState = GameState.MENU;
+
+    public void setState(GameState newState) {
+        if (this.currentState == newState) {
+            return;
+        }
+        this.currentState = newState;
+        onStateChanged(newState);
+    }
+
+    public GameState getCurrentState() {
+        return currentState;
+    }
+
+    private void onStateChanged(GameState newState) {
+        switch (newState) {
+            case PLAYING:
+                // Unpause physics, enable input
+                break;
+            case PAUSED:
+                // Pause physics, show pause menu
+                break;
+            case MENU:
+                // Show main menu
+                break;
+            case MISSION_COMPLETE:
+                // Show mission complete screen
+                break;
+        }
+    }
+}
+package com.javacity.interaction;
+
+import com.jme3.math.Vector3f;
+
+public interface Interactable {
+    String getInteractionPrompt();
+    void interact(Object player);
+    Vector3f getPosition();
+    float getInteractionRadius();
+}
+package com.javacity.interaction;
+
+import com.jme3.font.BitmapFont;
+import com.jme3.font.BitmapText;
+import com.jme3.math.ColorRGBA;
+import com.jme3.scene.Node;
+
+public class InteractionPrompt {
+    private BitmapText promptText;
+    private Node guiNode;
+    private int screenWidth, screenHeight;
+
+    public InteractionPrompt(Node guiNode, BitmapFont font, int width, int height) {
+        this.guiNode = guiNode;
+        this.screenWidth = width;
+        this.screenHeight = height;
+
+        promptText = new BitmapText(font);
+        promptText.setSize(font.getCharSet().getRenderedSize() * 1.5f);
+        promptText.setColor(ColorRGBA.White);
+    }
+
+    public void show(String text) {
+        promptText.setText(text);
+        float textWidth = promptText.getLineWidth();
+        promptText.setLocalTranslation((screenWidth - textWidth) / 2f, screenHeight * 0.2f, 0);
+        
+        if (promptText.getParent() == null) {
+            guiNode.attachChild(promptText);
+        }
+    }
+
+    public void hide() {
+        if (promptText.getParent() != null) {
+            promptText.removeFromParent();
+        }
+    }
+}
+package com.javacity.interaction;
+
+import com.jme3.math.Vector3f;
+import java.util.ArrayList;
+import java.util.List;
+
+public class InteractionSystem {
+    private List<Interactable> interactables = new ArrayList<>();
+    private Interactable currentTarget = null;
+
+    public void register(Interactable interactable) {
+        if (!interactables.contains(interactable)) {
+            interactables.add(interactable);
+        }
+    }
+
+    public void unregister(Interactable interactable) {
+        interactables.remove(interactable);
+        if (currentTarget == interactable) {
+            currentTarget = null;
+        }
+    }
+
+    public void update(float tpf, Vector3f playerPos) {
+        Interactable nearest = null;
+        float minDist = Float.MAX_VALUE;
+
+        for (Interactable inter : interactables) {
+            float dist = inter.getPosition().distance(playerPos);
+            if (dist <= inter.getInteractionRadius() && dist < minDist) {
+                nearest = inter;
+                minDist = dist;
+            }
+        }
+
+        currentTarget = nearest;
+    }
+
+    public boolean tryInteract(Object player) {
+        if (currentTarget != null) {
+            currentTarget.interact(player);
+            return true;
+        }
+        return false;
+    }
+
+    public String getCurrentPrompt() {
+        if (currentTarget != null) {
+            return currentTarget.getInteractionPrompt();
+        }
+        return null;
+    }
+}
+package com.javacity.mission;
+
+import com.jme3.math.Vector3f;
+import java.util.List;
+
+public class Mission {
+    public String name;
+    public String description;
+    public List<MissionObjective> objectives;
+    public int currentObjectiveIndex = 0;
+    public MissionState state = MissionState.NOT_STARTED;
+
+    public Mission(String name, String description, List<MissionObjective> objectives) {
+        this.name = name;
+        this.description = description;
+        this.objectives = objectives;
+    }
+
+    public MissionObjective getCurrentObjective() {
+        if (currentObjectiveIndex >= 0 && currentObjectiveIndex < objectives.size()) {
+            return objectives.get(currentObjectiveIndex);
+        }
+        return null;
+    }
+
+    public boolean advanceObjective() {
+        MissionObjective current = getCurrentObjective();
+        if (current != null) {
+            current.isComplete = true;
+        }
+        
+        currentObjectiveIndex++;
+        if (currentObjectiveIndex >= objectives.size()) {
+            state = MissionState.COMPLETE;
+            return true;
+        }
+        return false;
+    }
+
+    public void update(float tpf, Vector3f playerPos, String playerState, int wantedLevel) {
+        if (state != MissionState.ACTIVE && !state.name().startsWith("OBJECTIVE_")) return;
+
+        MissionObjective obj = getCurrentObjective();
+        if (obj != null && obj.checkCompletion(playerPos, playerState, wantedLevel)) {
+            advanceObjective();
+        }
+    }
+}
+package com.javacity.mission;
+
+import com.jme3.math.Vector3f;
+import java.util.ArrayList;
+import java.util.List;
+
+public interface OnMissionComplete {
+    void onMissionComplete(Mission mission);
+}
+
+public interface OnObjectiveComplete {
+    void onObjectiveComplete(MissionObjective objective);
+}
+
+public class MissionManager {
+    private List<Mission> missions = new ArrayList<>();
+    private Mission activeMission;
+    
+    private OnMissionComplete missionCompleteListener;
+    private OnObjectiveComplete objectiveCompleteListener;
+
+    public MissionManager() {
+        createGetawayMission();
+    }
+    
+    public void setListeners(OnMissionComplete mcl, OnObjectiveComplete ocl) {
+        this.missionCompleteListener = mcl;
+        this.objectiveCompleteListener = ocl;
+    }
+
+    private void createGetawayMission() {
+        List<MissionObjective> objs = new ArrayList<>();
+        objs.add(new MissionObjective("Talk to the contact", MissionObjective.ObjectiveType.TALK_TO_NPC, new Vector3f(10, 1.5f, 10)));
+        objs.add(new MissionObjective("Get to the vehicle", MissionObjective.ObjectiveType.REACH_LOCATION, new Vector3f(20, 1.5f, 20)));
+        objs.add(new MissionObjective("Enter the vehicle", MissionObjective.ObjectiveType.ENTER_VEHICLE, null));
+        objs.add(new MissionObjective("Drive to the safehouse", MissionObjective.ObjectiveType.REACH_DESTINATION, new Vector3f(200, 1.5f, -100)));
+        objs.add(new MissionObjective("Lose the cops", MissionObjective.ObjectiveType.ESCAPE_POLICE, null));
+        
+        Mission mission = new Mission("GETAWAY", "Meet the contact and make the delivery.", objs);
+        mission.state = MissionState.AVAILABLE;
+        missions.add(mission);
+    }
+
+    public void startMission(Mission mission) {
+        this.activeMission = mission;
+        mission.state = MissionState.ACTIVE;
+        mission.currentObjectiveIndex = 0;
+    }
+
+    public Mission getActiveMission() {
+        return activeMission;
+    }
+
+    public void update(float tpf, Vector3f playerPos, String playerState, int wantedLevel) {
+        if (activeMission != null) {
+            int oldIdx = activeMission.currentObjectiveIndex;
+            
+            activeMission.update(tpf, playerPos, playerState, wantedLevel);
+            
+            if (activeMission.state == MissionState.COMPLETE) {
+                if (missionCompleteListener != null) missionCompleteListener.onMissionComplete(activeMission);
+                activeMission = null;
+            } else if (activeMission.currentObjectiveIndex > oldIdx) {
+                if (objectiveCompleteListener != null) objectiveCompleteListener.onObjectiveComplete(activeMission.objectives.get(oldIdx));
+            }
+        }
+    }
+}
+package com.javacity.mission;
+
+import com.jme3.math.Vector3f;
+
+public class MissionObjective {
+    public enum ObjectiveType {
+        REACH_LOCATION, ENTER_VEHICLE, TALK_TO_NPC, ESCAPE_POLICE, REACH_DESTINATION
+    }
+
+    public String description;
+    public ObjectiveType type;
+    public Vector3f targetLocation;
+    public float completionRadius = 5f;
+    public boolean isComplete = false;
+    
+    public MissionObjective(String description, ObjectiveType type, Vector3f targetLocation) {
+        this.description = description;
+        this.type = type;
+        this.targetLocation = targetLocation;
+    }
+    
+    public boolean checkCompletion(Vector3f playerPos, String playerState, int wantedLevel) {
+        if (isComplete) return true;
+        
+        switch (type) {
+            case REACH_LOCATION:
+            case REACH_DESTINATION:
+            case TALK_TO_NPC:
+                if (targetLocation != null && playerPos.distance(targetLocation) <= completionRadius) {
+                    return true;
+                }
+                break;
+            case ENTER_VEHICLE:
+                if ("IN_VEHICLE".equals(playerState)) {
+                    return true;
+                }
+                break;
+            case ESCAPE_POLICE:
+                if (wantedLevel == 0) {
+                    return true;
+                }
+                break;
+        }
+        return false;
+    }
+}
+package com.javacity.mission;
+
+public enum MissionState {
+    NOT_STARTED, AVAILABLE, ACTIVE, 
+    OBJECTIVE_1, OBJECTIVE_2, OBJECTIVE_3, OBJECTIVE_4, OBJECTIVE_5, 
+    COMPLETE, FAILED
+}
+package com.javacity.npc;
+
+import com.javacity.utilities.AssetHelper;
+import com.jme3.anim.AnimComposer;
+import com.jme3.asset.AssetManager;
+import com.jme3.asset.AssetNotFoundException;
+import com.jme3.bullet.PhysicsSpace;
+import com.jme3.bullet.control.BetterCharacterControl;
+import com.jme3.math.Vector3f;
+import com.jme3.scene.Node;
+import com.jme3.scene.Spatial;
+import com.jme3.scene.shape.Box;
+import com.jme3.scene.Geometry;
+import com.jme3.material.Material;
+import com.jme3.math.ColorRGBA;
+
+public class NPC {
+    public Node npcNode;
+    public Spatial model;
+    public BetterCharacterControl characterControl;
+    public AnimComposer animComposer;
+    public NPCState currentState = NPCState.IDLE;
+    public Vector3f currentDestination = new Vector3f();
+    public float idleTimer = 0f;
+    public float walkTimer = 0f;
+    public String modelPath;
+    
+    private AssetManager assetManager;
+    private PhysicsSpace physicsSpace;
+
+    public NPC(AssetManager assetManager, PhysicsSpace physicsSpace, String modelPath, Vector3f spawnPos) {
+        this.assetManager = assetManager;
+        this.physicsSpace = physicsSpace;
+        this.modelPath = modelPath;
+        
+        npcNode = new Node("NPC_" + System.currentTimeMillis());
+        
+        try {
+            model = assetManager.loadModel(modelPath);
+        } catch (AssetNotFoundException e) {
+            System.err.println("NPC model not found: " + modelPath + ". Creating placeholder.");
+            Box b = new Box(0.3f, 0.85f, 0.3f);
+            Geometry geom = new Geometry("NPC_Placeholder", b);
+            Material mat = new Material(assetManager, "Common/MatDefs/Light/PBRLighting.j3md");
+            mat.setColor("BaseColor", ColorRGBA.Blue);
+            geom.setMaterial(mat);
+            geom.setLocalTranslation(0, 0.85f, 0);
+            model = geom;
+        }
+        
+        npcNode.attachChild(model);
+        
+        characterControl = new BetterCharacterControl(0.3f, 1.7f, 70f);
+        npcNode.addControl(characterControl);
+        physicsSpace.add(characterControl);
+        
+        characterControl.warp(spawnPos);
+        
+        animComposer = AssetHelper.findAnimComposer(model);
+    }
+    
+    public void update(float tpf) {
+    }
+    
+    public void setDestination(Vector3f dest) {
+        this.currentDestination.set(dest);
+    }
+    
+    public Vector3f getPosition() {
+        return npcNode.getLocalTranslation();
+    }
+    
+    public void destroy() {
+        if (physicsSpace != null && characterControl != null) {
+            physicsSpace.remove(characterControl);
+        }
+        npcNode.removeFromParent();
+    }
+}
+package com.javacity.npc;
+
+import com.javacity.utilities.MathUtils;
+import com.jme3.math.Vector3f;
+import java.util.Random;
+
+public class NPCController {
+    private Random random = new Random();
+    
+    public void update(float tpf, NPC npc) {
+        npc.update(tpf);
+        
+        switch (npc.currentState) {
+            case IDLE:
+                handleIdle(tpf, npc);
+                break;
+            case WALKING:
+                handleWalking(tpf, npc);
+                break;
+            case FLEEING:
+                handleFleeing(tpf, npc);
+                break;
+            default:
+                break;
+        }
+    }
+    
+    private void handleIdle(float tpf, NPC npc) {
+        npc.idleTimer -= tpf;
+        if (npc.idleTimer <= 0) {
+            Vector3f dest = MathUtils.randomPointInRadius(npc.getPosition(), 20f);
+            npc.setDestination(dest);
+            npc.currentState = NPCState.WALKING;
+            playAnim(npc, "Walk");
+            npc.walkTimer = 15f; 
+        }
+        npc.characterControl.setWalkDirection(Vector3f.ZERO);
+    }
+    
+    private void handleWalking(float tpf, NPC npc) {
+        npc.walkTimer -= tpf;
+        Vector3f pos = npc.getPosition();
+        Vector3f dir = npc.currentDestination.subtract(pos);
+        dir.y = 0;
+        
+        if (dir.length() < 1f || npc.walkTimer <= 0) {
+            npc.currentState = NPCState.IDLE;
+            npc.idleTimer = 2f + random.nextFloat() * 3f;
+            playAnim(npc, "Idle");
+            npc.characterControl.setWalkDirection(Vector3f.ZERO);
+            return;
+        }
+        
+        dir.normalizeLocal();
+        npc.characterControl.setViewDirection(dir);
+        npc.characterControl.setWalkDirection(dir.mult(2f));
+    }
+    
+    private void handleFleeing(float tpf, NPC npc) {
+        Vector3f pos = npc.getPosition();
+        Vector3f dir = pos.subtract(npc.currentDestination); 
+        dir.y = 0;
+        
+        if (dir.length() > 30f) {
+            npc.currentState = NPCState.IDLE;
+            npc.idleTimer = 2f;
+            playAnim(npc, "Idle");
+            return;
+        }
+        
+        dir.normalizeLocal();
+        npc.characterControl.setViewDirection(dir);
+        npc.characterControl.setWalkDirection(dir.mult(8f));
+    }
+    
+    public void triggerFlee(NPC npc, Vector3f threatPos) {
+        npc.currentState = NPCState.FLEEING;
+        npc.setDestination(threatPos);
+        playAnim(npc, "Run");
+    }
+    
+    private void playAnim(NPC npc, String animName) {
+        if (npc.animComposer != null) {
+            try {
+                if (npc.animComposer.getAnimClips().contains(animName)) {
+                    npc.animComposer.setCurrentAction(animName);
+                }
+            } catch (Exception e) {}
+        }
+    }
+}
+package com.javacity.npc;
+
+import com.javacity.world.SpawnManager;
+import com.jme3.asset.AssetManager;
+import com.jme3.bullet.PhysicsSpace;
+import com.jme3.math.Vector3f;
+import com.jme3.scene.Node;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Random;
+
+public class NPCSpawner {
+    private List<NPC> activeNPCs = new ArrayList<>();
+    private int maxNPCs = 20;
+    private String[] civilianModels = {
+        "Models/NPC/civilian_01.glb", 
+        "Models/NPC/civilian_02.glb"
+    };
+    
+    private AssetManager assetManager;
+    private PhysicsSpace physicsSpace;
+    private Node rootNode;
+    private SpawnManager spawnManager;
+    private NPCController npcController;
+    private Random random = new Random();
+
+    public NPCSpawner(AssetManager assetManager, PhysicsSpace physicsSpace, Node rootNode, SpawnManager spawnManager) {
+        this.assetManager = assetManager;
+        this.physicsSpace = physicsSpace;
+        this.rootNode = rootNode;
+        this.spawnManager = spawnManager;
+        this.npcController = new NPCController();
+    }
+    
+    public void spawnInitialNPCs() {
+        for (int i = 0; i < maxNPCs; i++) {
+            Vector3f pos = spawnManager.getRandomNPCSpawnPoint();
+            if (pos != null) {
+                spawnNPC(pos);
+            }
+        }
+    }
+    
+    public NPC spawnNPC(Vector3f pos) {
+        if (activeNPCs.size() >= maxNPCs) return null;
+        
+        String model = civilianModels[random.nextInt(civilianModels.length)];
+        NPC npc = new NPC(assetManager, physicsSpace, model, pos);
+        rootNode.attachChild(npc.npcNode);
+        activeNPCs.add(npc);
+        return npc;
+    }
+    
+    public void despawnNPC(NPC npc) {
+        npc.destroy();
+        activeNPCs.remove(npc);
+    }
+    
+    public void update(float tpf, Vector3f playerPos) {
+        Iterator<NPC> iter = activeNPCs.iterator();
+        while (iter.hasNext()) {
+            NPC npc = iter.next();
+            if (npc.getPosition().distance(playerPos) > 80f) {
+                npc.destroy();
+                iter.remove();
+            } else {
+                npcController.update(tpf, npc);
+            }
+        }
+        
+        if (activeNPCs.size() < maxNPCs) {
+            Vector3f pos = spawnManager.getRandomNPCSpawnPoint();
+            if (pos != null && pos.distance(playerPos) < 60f && pos.distance(playerPos) > 20f) {
+                spawnNPC(pos);
+            }
+        }
+    }
+    
+    public List<NPC> getActiveNPCs() {
+        return activeNPCs;
+    }
+}
+package com.javacity.npc;
+
+public enum NPCState {
+    IDLE, WALKING, RUNNING, FLEEING, TALKING, CHASE, PURSUE
+}
+package com.javacity.player;
+
+import com.jme3.asset.AssetManager;
+import com.jme3.bullet.PhysicsSpace;
+import com.jme3.bullet.control.BetterCharacterControl;
+import com.jme3.math.Vector3f;
+import com.jme3.scene.Node;
+import com.jme3.scene.Spatial;
+
+public class Player {
+    private Node playerNode;
+    private Spatial playerModel;
+    private BetterCharacterControl characterControl;
+    private PlayerStats stats;
+    private PlayerState state;
+    private PlayerController controller;
+    private PlayerAnimationController animationController;
+    private PhysicsSpace physicsSpace;
+
+    public Player(AssetManager assetManager, PhysicsSpace physicsSpace) {
+        this.physicsSpace = physicsSpace;
+        this.stats = new PlayerStats();
+        this.state = PlayerState.ON_FOOT;
+        
+        this.playerNode = new Node("PlayerNode");
+        
+        try {
+            this.playerModel = assetManager.loadModel("Models/player.glb");
+        } catch (Exception e) {
+            this.playerModel = new Node("DummyPlayer");
+        }
+        this.playerNode.attachChild(this.playerModel);
+        
+        this.characterControl = new BetterCharacterControl(0.4f, 1.8f, 80f);
+        this.playerNode.addControl(this.characterControl);
+        this.physicsSpace.add(this.characterControl);
+        
+        this.controller = new PlayerController(this.characterControl);
+        this.animationController = new PlayerAnimationController(this.playerModel);
+    }
+
+    public void update(float tpf, com.jme3.renderer.Camera cam, boolean[] inputState) {
+        if (state == PlayerState.ON_FOOT) {
+            controller.update(tpf, cam, inputState);
+            float speed = controller.getCurrentSpeed();
+            boolean onGround = characterControl.isOnGround();
+            animationController.update(tpf, speed, onGround, false);
+        } else if (state == PlayerState.IN_VEHICLE) {
+            animationController.update(tpf, 0f, true, true);
+        } else if (state == PlayerState.DEAD) {
+            animationController.update(tpf, 0f, true, false);
+        }
+    }
+
+    public Vector3f getPosition() {
+        return playerNode.getLocalTranslation();
+    }
+
+    public void setPosition(Vector3f position) {
+        characterControl.warp(position);
+    }
+
+    public Node getNode() {
+        return playerNode;
+    }
+
+    public BetterCharacterControl getCharacterControl() {
+        return characterControl;
+    }
+
+    public PlayerStats getStats() {
+        return stats;
+    }
+
+    public PlayerState getState() {
+        return state;
+    }
+
+    public void setState(PlayerState state) {
+        this.state = state;
+    }
+    
+    public void show() {
+        playerNode.setCullHint(Spatial.CullHint.Inherit);
+        physicsSpace.add(characterControl);
+    }
+    
+    public void hide() {
+        playerNode.setCullHint(Spatial.CullHint.Always);
+        physicsSpace.remove(characterControl);
+    }
+}
+package com.javacity.player;
+
+import com.jme3.anim.AnimComposer;
+import com.jme3.scene.Node;
+import com.jme3.scene.Spatial;
+
+public class PlayerAnimationController {
+    private AnimComposer animComposer;
+    private String currentAction = "";
+
+    public PlayerAnimationController(Spatial playerModel) {
+        this.animComposer = findAnimComposer(playerModel);
+    }
+
+    private AnimComposer findAnimComposer(Spatial spatial) {
+        if (spatial.getControl(AnimComposer.class) != null) {
+            return spatial.getControl(AnimComposer.class);
+        }
+        if (spatial instanceof Node) {
+            Node node = (Node) spatial;
+            for (Spatial child : node.getChildren()) {
+                AnimComposer composer = findAnimComposer(child);
+                if (composer != null) return composer;
+            }
+        }
+        return null;
+    }
+
+    public void update(float tpf, float speed, boolean isOnGround, boolean isInVehicle) {
+        if (animComposer == null) return;
+
+        String targetAction = "Idle";
+
+        if (isInVehicle) {
+            targetAction = "Drive";
+        } else if (!isOnGround) {
+            targetAction = "Jump";
+        } else {
+            if (speed == 0) {
+                targetAction = "Idle";
+            } else if (speed < 4.5f) {
+                targetAction = "Walk";
+            } else if (speed < 9.0f) {
+                targetAction = "Run";
+            } else {
+                targetAction = "Sprint";
+            }
+        }
+
+        if (!targetAction.equals(currentAction)) {
+            if (animComposer.getAnimClips().contains(targetAction)) {
+                animComposer.setCurrentAction(targetAction);
+                currentAction = targetAction;
+            } else if (animComposer.getAnimClips().contains("Idle")) {
+                if (!currentAction.equals("Idle")) {
+                    animComposer.setCurrentAction("Idle");
+                    currentAction = "Idle";
+                }
+            }
+        }
+    }
+}
+package com.javacity.player;
+
+import com.jme3.bullet.control.BetterCharacterControl;
+import com.jme3.math.Vector3f;
+import com.jme3.renderer.Camera;
+
+public class PlayerController {
+    private BetterCharacterControl characterControl;
+    private float currentSpeed = 0f;
+    private final float RUN_SPEED = 8.0f;
+    private final float SPRINT_SPEED = 12.0f;
+    private final float JUMP_FORCE = 15.0f;
+    
+    private Vector3f walkDirection = new Vector3f();
+    private Vector3f viewDirection = new Vector3f(0, 0, 1);
+    private Vector3f camDir = new Vector3f();
+    private Vector3f camLeft = new Vector3f();
+
+    public PlayerController(BetterCharacterControl characterControl) {
+        this.characterControl = characterControl;
+        this.characterControl.setJumpForce(new Vector3f(0, JUMP_FORCE, 0));
+    }
+
+    public void update(float tpf, Camera cam, boolean[] inputState) {
+        boolean forward = inputState[0];
+        boolean left = inputState[1];
+        boolean backward = inputState[2];
+        boolean right = inputState[3];
+        boolean sprint = inputState[4];
+        boolean jump = inputState[5];
+
+        camDir.set(cam.getDirection()).multLocal(1, 0, 1).normalizeLocal();
+        camLeft.set(cam.getLeft()).multLocal(1, 0, 1).normalizeLocal();
+
+        walkDirection.set(0, 0, 0);
+
+        if (forward) walkDirection.addLocal(camDir);
+        if (backward) walkDirection.addLocal(camDir.negate());
+        if (left) walkDirection.addLocal(camLeft);
+        if (right) walkDirection.addLocal(camLeft.negate());
+
+        if (walkDirection.lengthSquared() > 0) {
+            walkDirection.normalizeLocal();
+            viewDirection.set(walkDirection);
+            
+            float targetSpeed = sprint ? SPRINT_SPEED : RUN_SPEED;
+            currentSpeed = targetSpeed;
+            walkDirection.multLocal(currentSpeed);
+        } else {
+            currentSpeed = 0f;
+        }
+
+        characterControl.setWalkDirection(walkDirection);
+        characterControl.setViewDirection(viewDirection);
+
+        if (jump && characterControl.isOnGround()) {
+            characterControl.jump();
+        }
+    }
+
+    public float getCurrentSpeed() {
+        return currentSpeed;
+    }
+}
+package com.javacity.player;
+
+public enum PlayerState {
+    ON_FOOT,
+    IN_VEHICLE,
+    DEAD
+}
+package com.javacity.player;
+
+public class PlayerStats {
+    private float health = 100f;
+    private int money = 500;
+    private int wantedLevel = 0;
+
+    public float getHealth() {
+        return health;
+    }
+
+    public void damage(float amount) {
+        this.health -= amount;
+        if (this.health < 0) {
+            this.health = 0;
+        }
+    }
+
+    public void heal(float amount) {
+        this.health += amount;
+        if (this.health > 100f) {
+            this.health = 100f;
+        }
+    }
+
+    public boolean isDead() {
+        return this.health <= 0;
+    }
+
+    public int getMoney() {
+        return money;
+    }
+
+    public void addMoney(int amount) {
+        this.money += amount;
+    }
+
+    public boolean spendMoney(int amount) {
+        if (this.money >= amount) {
+            this.money -= amount;
+            return true;
+        }
+        return false;
+    }
+
+    public int getWantedLevel() {
+        return wantedLevel;
+    }
+
+    public void setWantedLevel(int wantedLevel) {
+        this.wantedLevel = Math.max(0, Math.min(5, wantedLevel));
+    }
+}
+package com.javacity.police;
+
+import com.javacity.world.SpawnManager;
+import com.jme3.asset.AssetManager;
+import com.jme3.bullet.PhysicsSpace;
+import com.jme3.math.Vector3f;
+import com.jme3.scene.Node;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+
+public class PoliceManager {
+    private List<PoliceNPC> activePolice = new ArrayList<>();
+    private AssetManager assetManager;
+    private PhysicsSpace physicsSpace;
+    private Node rootNode;
+    private SpawnManager spawnManager;
+
+    private float spawnTimer = 0f;
+
+    public PoliceManager(AssetManager assetManager, PhysicsSpace physicsSpace, Node rootNode, SpawnManager spawnManager) {
+        this.assetManager = assetManager;
+        this.physicsSpace = physicsSpace;
+        this.rootNode = rootNode;
+        this.spawnManager = spawnManager;
+    }
+
+    public void update(float tpf, int wantedLevel, Vector3f playerPos) {
+        if (wantedLevel == 0) {
+            if (!activePolice.isEmpty()) {
+                despawnAllPolice();
+            }
+            return;
+        }
+
+        Iterator<PoliceNPC> iter = activePolice.iterator();
+        while (iter.hasNext()) {
+            PoliceNPC cop = iter.next();
+            if (cop.getPosition().distance(playerPos) > 100f) {
+                cop.destroy();
+                iter.remove();
+            } else {
+                cop.updateChase(tpf, playerPos);
+            }
+        }
+
+        int targetCops = Math.min(5, wantedLevel * 2);
+        
+        spawnTimer -= tpf;
+        if (spawnTimer <= 0 && activePolice.size() < targetCops) {
+            Vector3f spawnPos = playerPos.add(new Vector3f((float)Math.random()*40-20, 0, (float)Math.random()*40-20));
+            spawnPos.y = 1.5f;
+            PoliceNPC cop = new PoliceNPC(assetManager, physicsSpace, spawnPos);
+            rootNode.attachChild(cop.npcNode);
+            activePolice.add(cop);
+            spawnTimer = 5f;
+        }
+    }
+
+    public void despawnAllPolice() {
+        for (PoliceNPC cop : activePolice) {
+            cop.destroy();
+        }
+        activePolice.clear();
+    }
+}
+package com.javacity.police;
+
+import com.javacity.npc.NPC;
+import com.javacity.npc.NPCState;
+import com.jme3.asset.AssetManager;
+import com.jme3.bullet.PhysicsSpace;
+import com.jme3.math.Vector3f;
+
+public class PoliceNPC extends NPC {
+
+    public PoliceNPC(AssetManager assetManager, PhysicsSpace physicsSpace, Vector3f spawnPos) {
+        super(assetManager, physicsSpace, "Models/NPC/police.glb", spawnPos);
+        this.currentState = NPCState.CHASE;
+    }
+    
+    public void updateChase(float tpf, Vector3f playerPos) {
+        if (currentState != NPCState.CHASE) return;
+        
+        Vector3f dir = playerPos.subtract(getPosition());
+        dir.y = 0;
+        
+        if (dir.length() < 3f) {
+            characterControl.setWalkDirection(Vector3f.ZERO);
+            // attempt arrest
+        } else {
+            dir.normalizeLocal();
+            characterControl.setViewDirection(dir);
+            characterControl.setWalkDirection(dir.mult(10f));
+            
+            if (animComposer != null) {
+                try {
+                    if (animComposer.getAnimClips().contains("Run")) {
+                        animComposer.setCurrentAction("Run");
+                    }
+                } catch(Exception e) {}
+            }
+        }
+    }
+}
+package com.javacity.police;
+
+public interface OnWantedLevelChanged {
+    void onWantedLevelChanged(int newLevel);
+}
+
+public class WantedSystem {
+    private int wantedLevel = 0;
+    private float cooldownTimer = 0f;
+    private float cooldownDuration = 30f;
+    private OnWantedLevelChanged listener;
+
+    public void setListener(OnWantedLevelChanged listener) {
+        this.listener = listener;
+    }
+
+    public void increaseWantedLevel(int amount) {
+        int old = wantedLevel;
+        wantedLevel = Math.min(5, wantedLevel + amount);
+        cooldownTimer = 0f;
+        if (wantedLevel != old && listener != null) {
+            listener.onWantedLevelChanged(wantedLevel);
+        }
+    }
+
+    public void decreaseWantedLevel() {
+        int old = wantedLevel;
+        wantedLevel = Math.max(0, wantedLevel - 1);
+        cooldownTimer = 0f;
+        if (wantedLevel != old && listener != null) {
+            listener.onWantedLevelChanged(wantedLevel);
+        }
+    }
+    
+    public void setWantedLevel(int level) {
+        wantedLevel = Math.min(5, Math.max(0, level));
+        cooldownTimer = 0f;
+        if (listener != null) {
+            listener.onWantedLevelChanged(wantedLevel);
+        }
+    }
+
+    public boolean isWanted() {
+        return wantedLevel > 0;
+    }
+
+    public int getWantedLevel() {
+        return wantedLevel;
+    }
+
+    public void update(float tpf, boolean isPlayerVisible) {
+        if (!isWanted()) return;
+
+        if (!isPlayerVisible) {
+            cooldownTimer += tpf;
+            if (cooldownTimer >= cooldownDuration) {
+                decreaseWantedLevel();
+            }
+        } else {
+            cooldownTimer = 0f;
+        }
+    }
+}
+package com.javacity.save;
+
+public class SaveData {
+    public float[] playerPosition = new float[3];
+    public float playerHealth = 100f;
+    public int money = 0;
+    public int wantedLevel = 0;
+    public String currentMission = "";
+    public String missionState = "NOT_STARTED";
+    public float timeOfDay = 10.0f;
+    
+    public SaveData() {
+    }
+}
+package com.javacity.save;
+
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+
+public class SaveManager {
+    private static final String SAVE_DIR = "saves/";
+
+    public SaveManager() {
+        File dir = new File(SAVE_DIR);
+        if (!dir.exists()) {
+            dir.mkdirs();
+        }
+    }
+
+    public void save(SaveData data, String filename) {
+        File file = new File(SAVE_DIR + filename + ".json");
+        try (FileWriter writer = new FileWriter(file)) {
+            String json = buildJson(data);
+            writer.write(json);
+            System.out.println("Game saved to " + file.getAbsolutePath());
+        } catch (IOException e) {
+            System.err.println("Failed to save game: " + e.getMessage());
+        }
+    }
+
+    public SaveData load(String filename) {
+        File file = new File(SAVE_DIR + filename + ".json");
+        if (!file.exists()) {
+            System.out.println("Save file not found.");
+            return null;
+        }
+
+        try (FileReader reader = new FileReader(file)) {
+            StringBuilder sb = new StringBuilder();
+            int c;
+            while ((c = reader.read()) != -1) {
+                sb.append((char) c);
+            }
+            return parseJson(sb.toString());
+        } catch (IOException e) {
+            System.err.println("Failed to load game: " + e.getMessage());
+        }
+        return null;
+    }
+
+    private String buildJson(SaveData data) {
+        return "{\n" +
+            "  \"playerPosition\": [" + data.playerPosition[0] + ", " + data.playerPosition[1] + ", " + data.playerPosition[2] + "],\n" +
+            "  \"playerHealth\": " + data.playerHealth + ",\n" +
+            "  \"money\": " + data.money + ",\n" +
+            "  \"wantedLevel\": " + data.wantedLevel + ",\n" +
+            "  \"currentMission\": \"" + data.currentMission + "\",\n" +
+            "  \"missionState\": \"" + data.missionState + "\",\n" +
+            "  \"timeOfDay\": " + data.timeOfDay + "\n" +
+            "}";
+    }
+
+    private SaveData parseJson(String json) {
+        SaveData data = new SaveData();
+        try {
+            data.playerHealth = extractFloat(json, "playerHealth");
+            data.money = (int) extractFloat(json, "money");
+            data.wantedLevel = (int) extractFloat(json, "wantedLevel");
+            data.currentMission = extractString(json, "currentMission");
+            data.missionState = extractString(json, "missionState");
+            data.timeOfDay = extractFloat(json, "timeOfDay");
+            
+            String posStr = json.substring(json.indexOf("\"playerPosition\": [") + 19);
+            posStr = posStr.substring(0, posStr.indexOf("]"));
+            String[] parts = posStr.split(",");
+            if(parts.length == 3) {
+                data.playerPosition[0] = Float.parseFloat(parts[0].trim());
+                data.playerPosition[1] = Float.parseFloat(parts[1].trim());
+                data.playerPosition[2] = Float.parseFloat(parts[2].trim());
+            }
+        } catch(Exception e) {
+            System.err.println("Error parsing save data JSON");
+        }
+        return data;
+    }
+
+    private float extractFloat(String json, String key) {
+        String search = "\"" + key + "\":";
+        int idx = json.indexOf(search);
+        if (idx == -1) return 0f;
+        idx += search.length();
+        int end = json.indexOf(",", idx);
+        if (end == -1) end = json.indexOf("\n", idx);
+        if (end == -1) end = json.length();
+        String val = json.substring(idx, end).trim();
+        return Float.parseFloat(val);
+    }
+    
+    private String extractString(String json, String key) {
+        String search = "\"" + key + "\":";
+        int idx = json.indexOf(search);
+        if (idx == -1) return "";
+        idx += search.length();
+        int startQuote = json.indexOf("\"", idx);
+        if(startQuote == -1) return "";
+        int endQuote = json.indexOf("\"", startQuote + 1);
+        if(endQuote == -1) return "";
+        return json.substring(startQuote + 1, endQuote);
+    }
+}
+package com.javacity.ui;
+
+import com.jme3.font.BitmapFont;
+import com.jme3.font.BitmapText;
+import com.jme3.math.ColorRGBA;
+import com.jme3.scene.Node;
+import com.jme3.ui.Picture;
+
+public class HUD {
+    private Node guiNode;
+    private int screenWidth, screenHeight;
+    
+    private Picture healthBarBg;
+    private Picture healthBar;
+    
+    private WantedUI wantedUI;
+    private MissionUI missionUI;
+    
+    private BitmapText speedText;
+    private BitmapText timeText;
+
+    public HUD(Node guiNode, BitmapFont font, int width, int height) {
+        this.guiNode = guiNode;
+        this.screenWidth = width;
+        this.screenHeight = height;
+        
+        healthBarBg = new Picture("HealthBg");
+        healthBarBg.setImage(guiNode.getUserData("assetManager"), "Common/MatDefs/Gui/Gui.j3md", true);
+        healthBarBg.getMaterial().setColor("Color", ColorRGBA.DarkGray);
+        healthBarBg.setWidth(200);
+        healthBarBg.setHeight(20);
+        healthBarBg.setPosition(20, height - 40);
+        guiNode.attachChild(healthBarBg);
+        
+        healthBar = new Picture("Health");
+        healthBar.setImage(guiNode.getUserData("assetManager"), "Common/MatDefs/Gui/Gui.j3md", true);
+        healthBar.getMaterial().setColor("Color", ColorRGBA.Red);
+        healthBar.setWidth(200);
+        healthBar.setHeight(20);
+        healthBar.setPosition(20, height - 40);
+        guiNode.attachChild(healthBar);
+        
+        wantedUI = new WantedUI(guiNode, font, width, height);
+        missionUI = new MissionUI(guiNode, font, width, height);
+        
+        speedText = new BitmapText(font);
+        speedText.setSize(font.getCharSet().getRenderedSize());
+        speedText.setColor(ColorRGBA.White);
+        speedText.setPosition(width - 150, 50);
+        guiNode.attachChild(speedText);
+        
+        timeText = new BitmapText(font);
+        timeText.setSize(font.getCharSet().getRenderedSize() * 1.5f);
+        timeText.setColor(ColorRGBA.White);
+        timeText.setPosition(width / 2f - 30, height - 20);
+        guiNode.attachChild(timeText);
+    }
+    
+    public void update(float tpf, float health, int wantedLevel, String missionText, float vehicleSpeed, String timeStr) {
+        float hpWidth = 200 * (Math.max(0, health) / 100f);
+        healthBar.setWidth(hpWidth);
+        
+        wantedUI.update(wantedLevel);
+        
+        if (missionText != null && !missionText.isEmpty()) {
+            missionUI.update("MISSION", missionText, false);
+        }
+        
+        if (vehicleSpeed >= 0) {
+            speedText.setText(String.format("Speed: %.0f km/h", vehicleSpeed * 3.6f));
+        } else {
+            speedText.setText("");
+        }
+        
+        timeText.setText(timeStr);
+    }
+}
+package com.javacity.ui;
+
+import com.jme3.font.BitmapFont;
+import com.jme3.font.BitmapText;
+import com.jme3.math.ColorRGBA;
+import com.jme3.scene.Node;
+
+public class MissionUI {
+    private BitmapText nameText;
+    private BitmapText descText;
+    private BitmapText completeText;
+    private int screenWidth;
+
+    public MissionUI(Node guiNode, BitmapFont font, int width, int height) {
+        this.screenWidth = width;
+        
+        nameText = new BitmapText(font);
+        nameText.setSize(font.getCharSet().getRenderedSize() * 1.2f);
+        nameText.setColor(ColorRGBA.Yellow);
+        nameText.setPosition(20, height - 80);
+        guiNode.attachChild(nameText);
+        
+        descText = new BitmapText(font);
+        descText.setSize(font.getCharSet().getRenderedSize());
+        descText.setColor(ColorRGBA.White);
+        descText.setPosition(20, height - 110);
+        guiNode.attachChild(descText);
+        
+        completeText = new BitmapText(font);
+        completeText.setSize(font.getCharSet().getRenderedSize() * 2f);
+        completeText.setColor(ColorRGBA.Green);
+        completeText.setText("MISSION COMPLETE");
+        float w = completeText.getLineWidth();
+        completeText.setPosition((width - w) / 2f, height / 2f);
+    }
+
+    public void update(String missionName, String objectiveText, boolean showComplete) {
+        nameText.setText(missionName);
+        descText.setText(objectiveText);
+        
+        if (showComplete) {
+            if (completeText.getParent() == null) {
+                nameText.getParent().attachChild(completeText);
+            }
+        } else {
+            if (completeText.getParent() != null) {
+                completeText.removeFromParent();
+            }
+        }
+    }
+}
+package com.javacity.ui;
+
+import com.jme3.font.BitmapFont;
+import com.jme3.font.BitmapText;
+import com.jme3.math.ColorRGBA;
+import com.jme3.scene.Node;
+import com.jme3.ui.Picture;
+
+public class PauseMenu {
+    private Node guiNode;
+    private Node menuNode;
+    private boolean visible = false;
+
+    public interface PauseMenuCallback {
+        void onResume();
+        void onSave();
+        void onLoad();
+        void onQuit();
+    }
+    
+    private PauseMenuCallback callback;
+
+    public PauseMenu(Node guiNode, BitmapFont font, int width, int height, PauseMenuCallback callback) {
+        this.guiNode = guiNode;
+        this.callback = callback;
+        
+        menuNode = new Node("PauseMenu");
+        
+        Picture bg = new Picture("PauseBg");
+        bg.setImage(guiNode.getUserData("assetManager"), "Common/MatDefs/Gui/Gui.j3md", true);
+        bg.getMaterial().setColor("Color", new ColorRGBA(0, 0, 0, 0.7f));
+        bg.setWidth(width);
+        bg.setHeight(height);
+        bg.setPosition(0, 0);
+        menuNode.attachChild(bg);
+        
+        BitmapText title = new BitmapText(font);
+        title.setSize(font.getCharSet().getRenderedSize() * 3f);
+        title.setText("PAUSED");
+        title.setColor(ColorRGBA.White);
+        title.setPosition((width - title.getLineWidth()) / 2f, height * 0.8f);
+        menuNode.attachChild(title);
+        
+        BitmapText resume = new BitmapText(font);
+        resume.setSize(font.getCharSet().getRenderedSize() * 1.5f);
+        resume.setText("[1] RESUME");
+        resume.setPosition((width - resume.getLineWidth()) / 2f, height * 0.6f);
+        menuNode.attachChild(resume);
+        
+        BitmapText save = new BitmapText(font);
+        save.setSize(font.getCharSet().getRenderedSize() * 1.5f);
+        save.setText("[2] SAVE GAME");
+        save.setPosition((width - save.getLineWidth()) / 2f, height * 0.5f);
+        menuNode.attachChild(save);
+        
+        BitmapText load = new BitmapText(font);
+        load.setSize(font.getCharSet().getRenderedSize() * 1.5f);
+        load.setText("[3] LOAD GAME");
+        load.setPosition((width - load.getLineWidth()) / 2f, height * 0.4f);
+        menuNode.attachChild(load);
+        
+        BitmapText quit = new BitmapText(font);
+        quit.setSize(font.getCharSet().getRenderedSize() * 1.5f);
+        quit.setText("[4] QUIT");
+        quit.setPosition((width - quit.getLineWidth()) / 2f, height * 0.3f);
+        menuNode.attachChild(quit);
+    }
+
+    public void show() {
+        if (!visible) {
+            guiNode.attachChild(menuNode);
+            visible = true;
+        }
+    }
+
+    public void hide() {
+        if (visible) {
+            menuNode.removeFromParent();
+            visible = false;
+        }
+    }
+
+    public boolean isVisible() {
+        return visible;
+    }
+    
+    public void handleInput(int key) {
+        if (!visible) return;
+        switch(key) {
+            case 1: callback.onResume(); break;
+            case 2: callback.onSave(); break;
+            case 3: callback.onLoad(); break;
+            case 4: callback.onQuit(); break;
+        }
+    }
+}
+package com.javacity.ui;
+
+import com.jme3.font.BitmapFont;
+import com.jme3.font.BitmapText;
+import com.jme3.math.ColorRGBA;
+import com.jme3.scene.Node;
+
+public class WantedUI {
+    private BitmapText wantedText;
+
+    public WantedUI(Node guiNode, BitmapFont font, int width, int height) {
+        wantedText = new BitmapText(font);
+        wantedText.setSize(font.getCharSet().getRenderedSize() * 2f);
+        wantedText.setColor(ColorRGBA.Yellow);
+        wantedText.setPosition(width - 150, height - 30);
+        guiNode.attachChild(wantedText);
+    }
+
+    public void update(int wantedLevel) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 5; i++) {
+            if (i < wantedLevel) {
+                sb.append("*"); // Star filled equivalent for default font
+            } else {
+                sb.append("-"); // Star empty
+            }
+        }
+        wantedText.setText(sb.toString());
+    }
+}
+package com.javacity.utilities;
+
+import com.jme3.anim.AnimComposer;
+import com.jme3.anim.SkinningControl;
+import com.jme3.scene.Node;
+import com.jme3.scene.Spatial;
+
+public class AssetHelper {
+
+    public static AnimComposer findAnimComposer(Spatial spatial) {
+        if (spatial.getControl(AnimComposer.class) != null) {
+            return spatial.getControl(AnimComposer.class);
+        }
+        if (spatial instanceof Node) {
+            for (Spatial child : ((Node) spatial).getChildren()) {
+                AnimComposer composer = findAnimComposer(child);
+                if (composer != null) {
+                    return composer;
+                }
+            }
+        }
+        return null;
+    }
+
+    public static SkinningControl findSkinningControl(Spatial spatial) {
+        if (spatial.getControl(SkinningControl.class) != null) {
+            return spatial.getControl(SkinningControl.class);
+        }
+        if (spatial instanceof Node) {
+            for (Spatial child : ((Node) spatial).getChildren()) {
+                SkinningControl control = findSkinningControl(child);
+                if (control != null) {
+                    return control;
+                }
+            }
+        }
+        return null;
+    }
+
+    public static Spatial findChild(Spatial parent, String name) {
+        if (name.equals(parent.getName())) {
+            return parent;
+        }
+        if (parent instanceof Node) {
+            for (Spatial child : ((Node) parent).getChildren()) {
+                Spatial found = findChild(child, name);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    public static void printSceneGraph(Spatial spatial, int depth) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < depth; i++) {
+            sb.append("  ");
+        }
+        sb.append(spatial.getName()).append(" (").append(spatial.getClass().getSimpleName()).append(")");
+        System.out.println(sb.toString());
+
+        if (spatial instanceof Node) {
+            for (Spatial child : ((Node) spatial).getChildren()) {
+                printSceneGraph(child, depth + 1);
+            }
+        }
+    }
+}
+package com.javacity.utilities;
+
+import com.jme3.font.BitmapFont;
+import com.jme3.font.BitmapText;
+import com.jme3.math.ColorRGBA;
+import com.jme3.math.Vector3f;
+import com.jme3.scene.Node;
+
+public class DebugUtils {
+    private boolean debugEnabled = false;
+    private BitmapText debugText;
+    private Node guiNode;
+
+    public DebugUtils(Node guiNode, BitmapFont guiFont) {
+        this.guiNode = guiNode;
+        debugText = new BitmapText(guiFont);
+        debugText.setSize(guiFont.getCharSet().getRenderedSize());
+        debugText.setColor(ColorRGBA.White);
+        debugText.setLocalTranslation(10, 200, 0);
+    }
+
+    public void toggle() {
+        debugEnabled = !debugEnabled;
+        if (debugEnabled) {
+            guiNode.attachChild(debugText);
+        } else {
+            guiNode.detachChild(debugText);
+        }
+    }
+
+    public void update(float tpf, Vector3f playerPos, int wantedLevel, String missionState, int npcCount, int vehicleCount, float fps) {
+        if (!debugEnabled) return;
+        
+        String text = String.format(
+            "FPS: %.1f\nPlayer: X:%.1f Y:%.1f Z:%.1f\nWanted: %d\nMission: %s\nNPCs: %d\nVehicles: %d",
+            fps,
+            playerPos != null ? playerPos.x : 0,
+            playerPos != null ? playerPos.y : 0,
+            playerPos != null ? playerPos.z : 0,
+            wantedLevel,
+            missionState != null ? missionState : "NONE",
+            npcCount,
+            vehicleCount
+        );
+        debugText.setText(text);
+    }
+}
+package com.javacity.utilities;
+
+import com.jme3.math.Vector3f;
+import java.util.Random;
+
+public class MathUtils {
+    private static final Random random = new Random();
+
+    public static float lerp(float a, float b, float t) {
+        return a + (b - a) * t;
+    }
+
+    public static Vector3f lerp(Vector3f a, Vector3f b, float t) {
+        return new Vector3f(
+            lerp(a.x, b.x, t),
+            lerp(a.y, b.y, t),
+            lerp(a.z, b.z, t)
+        );
+    }
+
+    public static float clamp(float val, float min, float max) {
+        return Math.max(min, Math.min(max, val));
+    }
+
+    public static float angleBetween(Vector3f a, Vector3f b) {
+        Vector3f aNorm = a.normalize();
+        Vector3f bNorm = b.normalize();
+        float dot = clamp(aNorm.dot(bNorm), -1f, 1f);
+        return (float) Math.acos(dot);
+    }
+
+    public static Vector3f randomPointInRadius(Vector3f center, float radius) {
+        float angle = (float) (random.nextFloat() * Math.PI * 2);
+        float r = radius * (float) Math.sqrt(random.nextFloat());
+        float x = r * (float) Math.cos(angle);
+        float z = r * (float) Math.sin(angle);
+        return new Vector3f(center.x + x, center.y, center.z + z);
+    }
+}
+package com.javacity.vehicles;
+
+import com.jme3.asset.AssetManager;
+import com.jme3.bullet.collision.shapes.BoxCollisionShape;
+import com.jme3.bullet.collision.shapes.CompoundCollisionShape;
+import com.jme3.bullet.control.VehicleControl;
+import com.jme3.math.FastMath;
+import com.jme3.math.Vector3f;
+import com.jme3.scene.Node;
+import com.jme3.scene.Spatial;
+
+public class Vehicle {
+    private Node vehicleNode;
+    private VehicleControl vehicleControl;
+    private String modelPath;
+    private float maxSpeed;
+    private float acceleration;
+    private float brakeForce;
+    private float steeringMax;
+    private float health;
+    private boolean isOccupied;
+    private VehicleType type;
+
+    public Vehicle(VehicleType type) {
+        this.type = type;
+        this.modelPath = type.getModelPath();
+        this.maxSpeed = type.getMaxSpeed();
+        this.acceleration = type.getAccelerationForce();
+        this.brakeForce = type.getMass() * 2f;
+        this.steeringMax = FastMath.QUARTER_PI * 0.5f; // About 22.5 degrees
+        this.health = 100f;
+        this.isOccupied = false;
+    }
+
+    public void initialize(AssetManager assetManager) {
+        Spatial model = assetManager.loadModel(modelPath);
+        vehicleNode = new Node("VehicleNode");
+        vehicleNode.attachChild(model);
+
+        BoxCollisionShape boxShape = new BoxCollisionShape(new Vector3f(1.0f, 0.5f, 2.5f));
+        CompoundCollisionShape compoundShape = new CompoundCollisionShape();
+        compoundShape.addChildShape(boxShape, new Vector3f(0, 1.0f, 0));
+
+        vehicleControl = new VehicleControl(compoundShape, type.getMass());
+        vehicleNode.addControl(vehicleControl);
+
+        vehicleControl.setSuspensionCompression(25f);
+        vehicleControl.setSuspensionDamping(25f);
+        vehicleControl.setSuspensionStiffness(25f);
+        vehicleControl.setFrictionSlip(1.5f);
+        vehicleControl.setRollInfluence(0.1f);
+
+        Spatial wheelFL = findWheel(model, "Wheel_FL");
+        Spatial wheelFR = findWheel(model, "Wheel_FR");
+        Spatial wheelRL = findWheel(model, "Wheel_RL");
+        Spatial wheelRR = findWheel(model, "Wheel_RR");
+
+        float suspensionRestLength = 0.2f;
+        float wheelRadius = 0.4f;
+
+        Vector3f wheelDirection = new Vector3f(0, -1, 0);
+        Vector3f wheelAxle = new Vector3f(-1, 0, 0);
+
+        vehicleControl.addWheel(wheelFL, new Vector3f(-1.0f, 0.5f, 1.5f),
+                wheelDirection, wheelAxle, suspensionRestLength, wheelRadius, true);
+        vehicleControl.addWheel(wheelFR, new Vector3f(1.0f, 0.5f, 1.5f),
+                wheelDirection, wheelAxle, suspensionRestLength, wheelRadius, true);
+        vehicleControl.addWheel(wheelRL, new Vector3f(-1.0f, 0.5f, -1.5f),
+                wheelDirection, wheelAxle, suspensionRestLength, wheelRadius, false);
+        vehicleControl.addWheel(wheelRR, new Vector3f(1.0f, 0.5f, -1.5f),
+                wheelDirection, wheelAxle, suspensionRestLength, wheelRadius, false);
+    }
+
+    private Spatial findWheel(Spatial root, String name) {
+        if (root instanceof Node) {
+            Spatial found = ((Node) root).getChild(name);
+            if (found != null) {
+                return found;
+            }
+            for (Spatial child : ((Node) root).getChildren()) {
+                found = findWheel(child, name);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return new Node(name); 
+    }
+
+    public void accelerate(float value) {
+        vehicleControl.accelerate(2, value * acceleration);
+        vehicleControl.accelerate(3, value * acceleration);
+    }
+
+    public void brake(float value) {
+        vehicleControl.brake(0, value * brakeForce);
+        vehicleControl.brake(1, value * brakeForce);
+        vehicleControl.brake(2, value * brakeForce);
+        vehicleControl.brake(3, value * brakeForce);
+    }
+
+    public void steer(float value) {
+        vehicleControl.steer(0, value * steeringMax);
+        vehicleControl.steer(1, value * steeringMax);
+    }
+
+    public void handbrake() {
+        vehicleControl.brake(2, brakeForce * 2f);
+        vehicleControl.brake(3, brakeForce * 2f);
+    }
+
+    public float getCurrentSpeed() {
+        return vehicleControl.getCurrentVehicleSpeedKmHour();
+    }
+
+    public Vector3f getPosition() {
+        return vehicleNode.getLocalTranslation();
+    }
+
+    public void reset() {
+        vehicleControl.clearForces();
+        vehicleControl.setLinearVelocity(Vector3f.ZERO);
+        vehicleControl.setAngularVelocity(Vector3f.ZERO);
+    }
+
+    public Node getVehicleNode() {
+        return vehicleNode;
+    }
+
+    public VehicleControl getVehicleControl() {
+        return vehicleControl;
+    }
+
+    public boolean isOccupied() {
+        return isOccupied;
+    }
+
+    public void setOccupied(boolean occupied) {
+        isOccupied = occupied;
+    }
+
+    public float getMaxSpeed() {
+        return maxSpeed;
+    }
+
+    public VehicleType getType() {
+        return type;
+    }
+
+    public float getHealth() {
+        return health;
+    }
+}
+package com.javacity.vehicles;
+
+import com.jme3.math.Vector3f;
+
+public class VehicleAI {
+    public enum State {
+        PARKED,
+        DRIVING_SLOW,
+        PURSUING
+    }
+
+    private State currentState;
+    private VehicleController controller;
+
+    public VehicleAI() {
+        this.currentState = State.PARKED;
+        this.controller = new VehicleController();
+    }
+
+    public void setState(State state) {
+        this.currentState = state;
+    }
+
+    public void update(float tpf, Vehicle vehicle, Vector3f targetPos) {
+        if (vehicle == null || vehicle.isOccupied()) {
+            return; 
+        }
+
+        boolean[] inputState = new boolean[5]; 
+
+        switch (currentState) {
+            case PARKED:
+                inputState[4] = true; 
+                break;
+                
+            case DRIVING_SLOW:
+                inputState[0] = true;
+                if (vehicle.getCurrentSpeed() > vehicle.getMaxSpeed() * 0.3f) {
+                    inputState[0] = false; 
+                }
+                break;
+                
+            case PURSUING:
+                if (targetPos != null) {
+                    Vector3f dirToTarget = targetPos.subtract(vehicle.getPosition()).normalizeLocal();
+                    Vector3f vehicleForward = vehicle.getVehicleNode().getLocalRotation().getRotationColumn(2);
+                    
+                    float dotForward = vehicleForward.dot(dirToTarget);
+                    
+                    Vector3f right = vehicle.getVehicleNode().getLocalRotation().getRotationColumn(0);
+                    float dotRight = right.dot(dirToTarget);
+
+                    inputState[0] = true; 
+                    
+                    if (dotRight > 0.1f) {
+                        inputState[3] = true; 
+                    } else if (dotRight < -0.1f) {
+                        inputState[2] = true; 
+                    }
+                    
+                    if (dotForward < 0) { 
+                        inputState[0] = false;
+                        inputState[1] = true; 
+                    }
+                }
+                break;
+        }
+
+        controller.update(tpf, vehicle, inputState);
+    }
+}
+package com.javacity.vehicles;
+
+import com.jme3.math.FastMath;
+
+public class VehicleController {
+
+    private float currentSteering = 0f;
+    private final float steeringSpeed = 2f;
+
+    public void update(float tpf, Vehicle vehicle, boolean[] inputState) {
+        if (vehicle == null) return;
+
+        boolean wPressed = inputState[0];
+        boolean sPressed = inputState[1];
+        boolean aPressed = inputState[2];
+        boolean dPressed = inputState[3];
+        boolean spacePressed = inputState[4];
+
+        float currentSpeed = Math.abs(vehicle.getCurrentSpeed());
+        float speedRatio = currentSpeed / vehicle.getMaxSpeed();
+        float throttle = 1.0f;
+        if (speedRatio > 1.0f) {
+            throttle = 0.0f;
+        } else if (speedRatio > 0.8f) {
+            throttle = 1.0f - ((speedRatio - 0.8f) * 5.0f);
+        }
+
+        if (wPressed) {
+            vehicle.accelerate(throttle);
+            vehicle.brake(0);
+        } else if (sPressed) {
+            vehicle.accelerate(-throttle);
+            vehicle.brake(0);
+        } else {
+            vehicle.accelerate(0f);
+            vehicle.brake(0.1f);
+        }
+
+        if (spacePressed) {
+            vehicle.handbrake();
+        }
+
+        if (aPressed) {
+            currentSteering += steeringSpeed * tpf;
+        } else if (dPressed) {
+            currentSteering -= steeringSpeed * tpf;
+        } else {
+            if (currentSteering > 0) {
+                currentSteering -= steeringSpeed * tpf * 2.0f;
+                if (currentSteering < 0) currentSteering = 0;
+            } else if (currentSteering < 0) {
+                currentSteering += steeringSpeed * tpf * 2.0f;
+                if (currentSteering > 0) currentSteering = 0;
+            }
+        }
+        
+        currentSteering = FastMath.clamp(currentSteering, -1.0f, 1.0f);
+        vehicle.steer(currentSteering);
+    }
+}
+package com.javacity.vehicles;
+
+import com.jme3.asset.AssetManager;
+import com.jme3.bullet.BulletAppState;
+import com.jme3.math.Quaternion;
+import com.jme3.math.Vector3f;
+import com.jme3.scene.Node;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class VehicleSpawner {
+    private List<Vector3f> spawnPoints;
+    private List<Vehicle> activeVehicles;
+    private int maxActiveVehicles = 20; 
+    private AssetManager assetManager;
+    private Node rootNode;
+    private BulletAppState physicsSpace;
+
+    public VehicleSpawner(AssetManager assetManager, Node rootNode, BulletAppState physicsSpace) {
+        this.assetManager = assetManager;
+        this.rootNode = rootNode;
+        this.physicsSpace = physicsSpace;
+        this.spawnPoints = new ArrayList<>();
+        this.activeVehicles = new ArrayList<>();
+    }
+
+    public void addSpawnPoint(Vector3f position) {
+        spawnPoints.add(position);
+    }
+
+    public Vehicle spawnVehicle(VehicleType type, Vector3f position, float yRotation) {
+        if (activeVehicles.size() >= maxActiveVehicles) {
+            return null; 
+        }
+
+        Vehicle vehicle = new Vehicle(type);
+        vehicle.initialize(assetManager);
+        
+        Quaternion rot = new Quaternion();
+        rot.fromAngles(0, yRotation, 0);
+        vehicle.getVehicleNode().setLocalTranslation(position);
+        vehicle.getVehicleNode().setLocalRotation(rot);
+        
+        vehicle.getVehicleControl().setPhysicsLocation(position);
+        vehicle.getVehicleControl().setPhysicsRotation(rot);
+
+        rootNode.attachChild(vehicle.getVehicleNode());
+        physicsSpace.getPhysicsSpace().add(vehicle.getVehicleControl());
+
+        activeVehicles.add(vehicle);
+        return vehicle;
+    }
+
+    public void despawnVehicle(Vehicle vehicle) {
+        rootNode.detachChild(vehicle.getVehicleNode());
+        physicsSpace.getPhysicsSpace().remove(vehicle.getVehicleControl());
+        activeVehicles.remove(vehicle);
+    }
+
+    public Vehicle findNearestVehicle(Vector3f playerPos, float maxDist) {
+        Vehicle nearest = null;
+        float minDistSq = maxDist * maxDist;
+
+        for (Vehicle vehicle : activeVehicles) {
+            float distSq = vehicle.getPosition().distanceSquared(playerPos);
+            if (distSq < minDistSq) {
+                minDistSq = distSq;
+                nearest = vehicle;
+            }
+        }
+
+        return nearest;
+    }
+
+    public void update(float tpf, Vector3f playerPos) {
+        float maxDistanceSq = 200f * 200f; 
+        
+        List<Vehicle> toDespawn = new ArrayList<>();
+        for (Vehicle v : activeVehicles) {
+            if (v.getPosition().distanceSquared(playerPos) > maxDistanceSq && !v.isOccupied()) {
+                toDespawn.add(v);
+            }
+        }
+        
+        for (Vehicle v : toDespawn) {
+            despawnVehicle(v);
+        }
+        
+        if (activeVehicles.size() < maxActiveVehicles && !spawnPoints.isEmpty()) {
+            for (Vector3f sp : spawnPoints) {
+                float distSq = sp.distanceSquared(playerPos);
+                if (distSq > 50f * 50f && distSq < 150f * 150f) {
+                    spawnVehicle(VehicleType.SEDAN, sp, 0f);
+                    break;
+                }
+            }
+        }
+    }
+
+    public void spawnInitialVehicles() {
+        for (Vector3f sp : spawnPoints) {
+            if (activeVehicles.size() >= maxActiveVehicles) break;
+            spawnVehicle(VehicleType.SEDAN, sp, 0f);
+        }
+    }
+
+    public List<Vehicle> getActiveVehicles() {
+        return activeVehicles;
+    }
+}
+package com.javacity.vehicles;
+
+public enum VehicleType {
+    SEDAN("Models/Vehicles/car_sedan.glb", 1200f, 800f, 50f),
+    SUV("Models/Vehicles/car_suv.glb", 1500f, 700f, 45f),
+    TAXI("Models/Vehicles/taxi.glb", 1200f, 800f, 50f),
+    POLICE("Models/Vehicles/police_car.glb", 1300f, 1000f, 60f);
+
+    private final String modelPath;
+    private final float mass;
+    private final float accelerationForce;
+    private final float maxSpeed;
+
+    VehicleType(String modelPath, float mass, float accelerationForce, float maxSpeed) {
+        this.modelPath = modelPath;
+        this.mass = mass;
+        this.accelerationForce = accelerationForce;
+        this.maxSpeed = maxSpeed;
+    }
+
+    public String getModelPath() {
+        return modelPath;
+    }
+
+    public float getMass() {
+        return mass;
+    }
+
+    public float getAccelerationForce() {
+        return accelerationForce;
+    }
+
+    public float getMaxSpeed() {
+        return maxSpeed;
+    }
+}
+package com.javacity.world;
+
+import com.jme3.asset.AssetManager;
+import com.jme3.asset.AssetNotFoundException;
+import com.jme3.bullet.PhysicsSpace;
+import com.jme3.bullet.collision.shapes.CollisionShape;
+import com.jme3.bullet.control.RigidBodyControl;
+import com.jme3.bullet.util.CollisionShapeFactory;
+import com.jme3.light.AmbientLight;
+import com.jme3.light.DirectionalLight;
+import com.jme3.material.Material;
+import com.jme3.math.ColorRGBA;
+import com.jme3.math.Vector3f;
+import com.jme3.scene.Geometry;
+import com.jme3.scene.Node;
+import com.jme3.scene.Spatial;
+import com.jme3.scene.shape.Quad;
+
+public class CityLoader {
+    private AssetManager assetManager;
+    private PhysicsSpace physicsSpace;
+
+    public CityLoader(AssetManager assetManager, PhysicsSpace physicsSpace) {
+        this.assetManager = assetManager;
+        this.physicsSpace = physicsSpace;
+    }
+
+    public Node loadCity() {
+        Node cityNode = new Node("City");
+        
+        Spatial cityModel = null;
+        try {
+            cityModel = assetManager.loadModel("Models/City/city_district.glb");
+        } catch (AssetNotFoundException e) {
+            System.err.println("WARNING: city_district.glb not found. Creating temporary ground plane.");
+            cityModel = createTempGround();
+        }
+        
+        CollisionShape sceneShape = CollisionShapeFactory.createMeshShape(cityModel);
+        RigidBodyControl landscape = new RigidBodyControl(sceneShape, 0);
+        cityModel.addControl(landscape);
+        physicsSpace.add(landscape);
+        
+        cityNode.attachChild(cityModel);
+        
+        setupLighting(cityNode);
+        
+        return cityNode;
+    }
+    
+    private Spatial createTempGround() {
+        Quad quad = new Quad(100f, 100f);
+        Geometry geo = new Geometry("TempGround", quad);
+        Material mat = new Material(assetManager, "Common/MatDefs/Light/PBRLighting.j3md");
+        mat.setColor("BaseColor", ColorRGBA.Gray);
+        mat.setFloat("Roughness", 0.8f);
+        mat.setFloat("Metallic", 0.1f);
+        geo.setMaterial(mat);
+        geo.setLocalTranslation(-50f, 0, 50f);
+        geo.rotate(-1.5708f, 0, 0);
+        return geo;
+    }
+    
+    private void setupLighting(Node root) {
+        DirectionalLight sun = new DirectionalLight();
+        sun.setDirection(new Vector3f(-1, -1, -1).normalizeLocal());
+        sun.setColor(ColorRGBA.White.mult(1.5f));
+        root.addLight(sun);
+        
+        AmbientLight ambient = new AmbientLight();
+        ambient.setColor(ColorRGBA.White.mult(0.2f));
+        root.addLight(ambient);
+    }
+}
+package com.javacity.world;
+
+import com.jme3.light.AmbientLight;
+import com.jme3.light.DirectionalLight;
+import com.jme3.math.ColorRGBA;
+import com.jme3.math.FastMath;
+import com.jme3.math.Vector3f;
+import com.jme3.scene.Node;
+
+public class DayNightSystem {
+    private float gameTime = 10.0f; 
+    private float speedMultiplier = 1.0f; // 1 real sec = 1 game min -> 60 game mins/sec -> 1 hr/sec 
+    
+    private DirectionalLight sun;
+    private AmbientLight ambient;
+
+    public DayNightSystem(Node rootNode) {
+        for (com.jme3.light.Light light : rootNode.getLocalLightList()) {
+            if (light instanceof DirectionalLight) {
+                sun = (DirectionalLight) light;
+            } else if (light instanceof AmbientLight) {
+                ambient = (AmbientLight) light;
+            }
+        }
+    }
+
+    public void update(float tpf) {
+        gameTime += (tpf * speedMultiplier) / 60.0f;
+        if (gameTime >= 24.0f) {
+            gameTime -= 24.0f;
+        }
+
+        if (sun != null && ambient != null) {
+            float timeAngle = (gameTime / 24.0f) * FastMath.TWO_PI;
+            float sunY = FastMath.sin(timeAngle - FastMath.HALF_PI);
+            float sunX = FastMath.cos(timeAngle - FastMath.HALF_PI);
+            
+            sun.setDirection(new Vector3f(sunX, -sunY, -0.5f).normalizeLocal());
+            
+            if (sunY > 0) { // Day
+                sun.setColor(ColorRGBA.White.mult(1.5f));
+                ambient.setColor(ColorRGBA.White.mult(0.3f));
+            } else if (sunY > -0.2f) { // Sunset/Sunrise
+                sun.setColor(new ColorRGBA(1.0f, 0.5f, 0.2f, 1.0f).mult(1.0f));
+                ambient.setColor(new ColorRGBA(0.4f, 0.3f, 0.3f, 1.0f));
+            } else { // Night
+                sun.setColor(new ColorRGBA(0.1f, 0.1f, 0.3f, 1.0f));
+                ambient.setColor(new ColorRGBA(0.05f, 0.05f, 0.1f, 1.0f));
+            }
+        }
+    }
+
+    public boolean isNight() {
+        return gameTime > 20.0f || gameTime < 6.0f;
+    }
+
+    public float getGameTime() {
+        return gameTime;
+    }
+    
+    public void setGameTime(float time) {
+        this.gameTime = time;
+    }
+
+    public String getTimeString() {
+        int hours = (int) gameTime;
+        int minutes = (int) ((gameTime - hours) * 60);
+        return String.format("%02d:%02d", hours, minutes);
+    }
+}
+package com.javacity.world;
+
+import com.jme3.math.Vector3f;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+
+public class SpawnManager {
+    private List<Vector3f> npcSpawnPoints = new ArrayList<>();
+    private List<Vector3f> vehicleSpawnPoints = new ArrayList<>();
+    private List<Float> vehicleSpawnRotations = new ArrayList<>();
+    private Vector3f playerSpawnPoint;
+    private Vector3f missionNPCSpawnPoint;
+    
+    private Random random = new Random();
+
+    public void setupSpawnPoints() {
+        playerSpawnPoint = new Vector3f(0, 1.5f, 0);
+        missionNPCSpawnPoint = new Vector3f(10, 1.5f, 10);
+        
+        for (int i = 0; i < 20; i++) {
+            npcSpawnPoints.add(new Vector3f(
+                (random.nextFloat() - 0.5f) * 80f,
+                1.5f,
+                (random.nextFloat() - 0.5f) * 80f
+            ));
+        }
+        
+        for (int i = 0; i < 10; i++) {
+            vehicleSpawnPoints.add(new Vector3f(
+                (random.nextFloat() - 0.5f) * 80f,
+                1.0f,
+                (random.nextFloat() - 0.5f) * 80f
+            ));
+            vehicleSpawnRotations.add(random.nextFloat() * (float)Math.PI * 2f);
+        }
+    }
+    
+    public Vector3f getPlayerSpawnPoint() {
+        return playerSpawnPoint;
+    }
+    
+    public Vector3f getMissionNPCSpawnPoint() {
+        return missionNPCSpawnPoint;
+    }
+    
+    public Vector3f getRandomNPCSpawnPoint() {
+        if (npcSpawnPoints.isEmpty()) return new Vector3f();
+        return npcSpawnPoints.get(random.nextInt(npcSpawnPoints.size()));
+    }
+    
+    public Vector3f getRandomVehicleSpawnPoint() {
+        if (vehicleSpawnPoints.isEmpty()) return new Vector3f();
+        return vehicleSpawnPoints.get(random.nextInt(vehicleSpawnPoints.size()));
+    }
+    
+    public float getVehicleRotation(Vector3f spawnPoint) {
+        int idx = vehicleSpawnPoints.indexOf(spawnPoint);
+        if (idx >= 0 && idx < vehicleSpawnRotations.size()) {
+            return vehicleSpawnRotations.get(idx);
+        }
+        return 0f;
+    }
+}
+package com.javacity.world;
+
+import com.jme3.asset.AssetManager;
+import com.jme3.bullet.PhysicsSpace;
+import com.jme3.scene.Node;
+
+public class WorldManager {
+    private CityLoader cityLoader;
+    private SpawnManager spawnManager;
+    private DayNightSystem dayNightSystem;
+    private Node rootNode;
+
+    public WorldManager(AssetManager assetManager, PhysicsSpace physicsSpace) {
+        this.cityLoader = new CityLoader(assetManager, physicsSpace);
+        this.spawnManager = new SpawnManager();
+    }
+
+    public void initialize() {
+        rootNode = cityLoader.loadCity();
+        spawnManager.setupSpawnPoints();
+        dayNightSystem = new DayNightSystem(rootNode);
+    }
+
+    public void update(float tpf) {
+        if (dayNightSystem != null) {
+            dayNightSystem.update(tpf);
+        }
+    }
+
+    public Node getRootNode() {
+        return rootNode;
+    }
+
+    public SpawnManager getSpawnManager() {
+        return spawnManager;
+    }
+
+    public DayNightSystem getDayNightSystem() {
+        return dayNightSystem;
+    }
+}

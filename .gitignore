@@ -1,0 +1,14 @@
+# Gradle build output
+.gradle/
+build/
+bin/
+out/
+.idea/
+*.iml
+*.log
+.DS_Store
+New Text Document.txt
+scratch/
+
+# Large 3D scene meshes (>100MB)
+assets/Scenes/City/*.glb
